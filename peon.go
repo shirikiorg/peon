@@ -175,8 +175,29 @@ func defaultAddr() string {
 // Shutdown gracefully shuts down the any underlying servers without
 // interrupting any active connections.
 func (s *S) Shutdown(ctx context.Context) error {
-	// s.HTTP1Server.Shutdown()
-	return nil
+	var (
+		err error
+		wg  sync.WaitGroup
+	)
+
+	if s.HTTP1Server != nil {
+		go func() { err = s.HTTP1Server.Shutdown(ctx) }()
+	}
+
+	if s.GRPCServer != nil {
+		go func() { s.GRPCServer.GracefulStop() }()
+	}
+
+	wg.Add(len(s.onShutdown))
+	for _, f := range s.onShutdown {
+		go func(f func()) {
+			defer wg.Done()
+			f()
+		}(f)
+	}
+
+	wg.Wait()
+	return err
 }
 
 // RegisterOnShutdown registers a function to call on Shutdown.
