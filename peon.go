@@ -17,6 +17,14 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	// ENVPort is the environment variable key for peon's port
+	ENVPort = "PORT"
+	// DefaultAddr is the port value that peon's will default to if no
+	// environment variable `ENVPort` is set
+	DefaultAddr = "8080"
+)
+
 // make sure *S implements Server
 // var _ Server = (*S)(nil)
 
@@ -94,8 +102,14 @@ func OptionHTTP1(srv *http.Server) Option {
 	}
 }
 
-// ListenAndServer wraps the default http.ListenAndServe
+// ListenAndServe wraps the default http.ListenAndServe
 // with graceful shutdown
+// According to the underlying S options ListenAndServe will listen
+// for incoming connection for http protocol and/or grpc protocol
+//
+// If both s.GRPCServer & s.HTTP1Server are set the ListenAndServe will
+// use the `github.com/soheilhy/cmux` package under the hood in order
+// to redirect incoming request according to the http `content-type` header.
 func (s *S) ListenAndServe(ctx context.Context) error {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, s.signals...)
@@ -145,11 +159,11 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 	return nil
 }
 
-// defaultAddr returns a properly formatted addri
+// defaultAddr returns a properly formatted addr
 func defaultAddr() string {
-	p := os.Getenv("PORT")
+	p := os.Getenv(ENVPort)
 	if p != "" {
 		return ":" + p
 	}
-	return ":8080"
+	return DefaultAddr
 }
