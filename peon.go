@@ -22,7 +22,7 @@ const (
 	ENVPort = "PORT"
 	// DefaultAddr is the port value that peon's will default to if no
 	// environment variable `ENVPort` is set
-	DefaultAddr = "8080"
+	DefaultAddr = ":8080"
 )
 
 // make sure *S implements Server
