@@ -50,13 +50,13 @@ func TestOptionGRPC(t *testing.T) {
 	}
 }
 
-func TestOptionHTTP1(t *testing.T) {
+func TestOptionHTTP(t *testing.T) {
 	s := &S{}
 	httpSrv := &http.Server{}
-	OptionHTTP1(httpSrv)(s)
+	OptionHTTP(httpSrv)(s)
 
-	if s.HTTP1Server != httpSrv {
-		t.Fatal("s.HTTP1 should be set with the http.Server instance passed in via OptionHTTP1")
+	if s.HTTPServer != httpSrv {
+		t.Fatal("s.HTTP should be set with the http.Server instance passed in via OptionHTTP")
 	}
 }
 

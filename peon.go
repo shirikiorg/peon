@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shirikiorg/wait"
 	"github.com/soheilhy/cmux"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -41,7 +42,7 @@ type Server interface {
 // S is an implementation of Server
 type S struct {
 	GRPCServer      *grpc.Server
-	HTTP1Server     *http.Server
+	HTTPServer      *http.Server
 	addr            string
 	graceful        bool
 	shutdownTimeout time.Duration
@@ -99,10 +100,10 @@ func OptionGRPC(opts ...grpc.ServerOption) Option {
 	}
 }
 
-// OptionHTTP1 adds an http server
-func OptionHTTP1(srv *http.Server) Option {
+// OptionHTTP adds an http server
+func OptionHTTP(srv *http.Server) Option {
 	return func(s *S) {
-		s.HTTP1Server = srv
+		s.HTTPServer = srv
 	}
 }
 
@@ -111,12 +112,12 @@ func OptionHTTP1(srv *http.Server) Option {
 // According to the underlying S options ListenAndServe will listen
 // for incoming connection for http protocol and/or grpc protocol
 //
-// If both s.GRPCServer & s.HTTP1Server are set the ListenAndServe will
+// If both s.GRPCServer & s.HTTPServer are set the ListenAndServe will
 // use the `github.com/soheilhy/cmux` package under the hood in order
 // to redirect incoming request according to the http `content-type` header.
 func (s *S) ListenAndServe(ctx context.Context) error {
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, s.signals...)
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, s.signals...)
 
 	// Create the main listener.
 	l, err := net.Listen("tcp", s.addr)
@@ -128,7 +129,7 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 
 	grpcL := l
 	http1L := l
-	if s.HTTP1Server != nil && s.GRPCServer != nil {
+	if s.HTTPServer != nil && s.GRPCServer != nil {
 		// Create a cmux.
 		m := cmux.New(l)
 
@@ -142,10 +143,10 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 		})
 	}
 
-	if s.HTTP1Server != nil {
+	if s.HTTPServer != nil {
 		g.Go(func() error {
 			fmt.Printf("listening http at %s\n", s.addr)
-			return s.HTTP1Server.Serve(http1L)
+			return s.HTTPServer.Serve(http1L)
 		})
 	}
 	if s.GRPCServer != nil {
@@ -155,12 +156,20 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 		})
 	}
 
+	var cancel func()
+
 	select {
 	case <-ctx.Done():
-	case <-done:
+		// here we don't wrap the top context because it's
+		// already done
+		ctx, cancel = context.WithTimeout(context.Background(), s.shutdownTimeout)
+	case <-interrupt:
+		ctx, cancel = context.WithTimeout(ctx, s.shutdownTimeout)
 	}
 
-	return nil
+	defer cancel()
+
+	return s.Shutdown(ctx)
 }
 
 // defaultAddr returns a properly formatted addr
@@ -174,18 +183,32 @@ func defaultAddr() string {
 
 // Shutdown gracefully shuts down the any underlying servers without
 // interrupting any active connections.
+// When shutdown starts it runs all the registered functions
+// in parallel. Shutdown waits for all operations to be completed before
+// returning.
 func (s *S) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	var (
 		err error
-		wg  sync.WaitGroup
+		wg  wait.Group
 	)
 
-	if s.HTTP1Server != nil {
-		go func() { err = s.HTTP1Server.Shutdown(ctx) }()
+	if s.HTTPServer != nil {
+		wg.Add(1)
+		go func() {
+			err = s.HTTPServer.Shutdown(ctx)
+			wg.Done()
+		}()
 	}
 
 	if s.GRPCServer != nil {
-		go func() { s.GRPCServer.GracefulStop() }()
+		wg.Add(1)
+		go func() {
+			s.GRPCServer.GracefulStop()
+			wg.Done()
+		}()
 	}
 
 	wg.Add(len(s.onShutdown))
@@ -196,7 +219,9 @@ func (s *S) Shutdown(ctx context.Context) error {
 		}(f)
 	}
 
-	wg.Wait()
+	if waitErr := wg.WaitWithContext(ctx); waitErr != nil {
+		return waitErr
+	}
 	return err
 }
 
@@ -209,7 +234,7 @@ func (s *S) RegisterOnShutdown(f func()) {
 
 // Close immediately closes all active on the underlying servers
 func (s *S) Close() error {
-	if s.GRPCServer != nil && s.HTTP1Server != nil {
+	if s.GRPCServer != nil && s.HTTPServer != nil {
 		var (
 			wg  sync.WaitGroup
 			err error
@@ -218,7 +243,7 @@ func (s *S) Close() error {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err = s.HTTP1Server.Close()
+			err = s.HTTPServer.Close()
 		}()
 
 		go func() {
@@ -235,8 +260,8 @@ func (s *S) Close() error {
 		return nil
 	}
 
-	if s.HTTP1Server != nil {
-		return s.HTTP1Server.Close()
+	if s.HTTPServer != nil {
+		return s.HTTPServer.Close()
 	}
 
 	return errors.New("nothing to close")
