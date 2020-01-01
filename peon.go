@@ -144,13 +144,13 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 
 	if s.HTTP1Server != nil {
 		g.Go(func() error {
-			fmt.Printf("listening grpc at %s\n", s.addr)
+			fmt.Printf("listening http at %s\n", s.addr)
 			return s.HTTP1Server.Serve(http1L)
 		})
 	}
 	if s.GRPCServer != nil {
 		g.Go(func() error {
-			fmt.Printf("listening http at %s\n", s.addr)
+			fmt.Printf("listening grpc at %s\n", s.addr)
 			return s.GRPCServer.Serve(grpcL)
 		})
 	}
