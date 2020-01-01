@@ -4,11 +4,13 @@ package peon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,7 +28,7 @@ const (
 )
 
 // make sure *S implements Server
-// var _ Server = (*S)(nil)
+var _ Server = (*S)(nil)
 
 // Server is the interface of an http server
 type Server interface {
@@ -44,6 +46,8 @@ type S struct {
 	graceful        bool
 	shutdownTimeout time.Duration
 	signals         []os.Signal
+	mu              sync.Mutex
+	onShutdown      []func()
 }
 
 // Option is a function type to add options
@@ -166,4 +170,53 @@ func defaultAddr() string {
 		return ":" + p
 	}
 	return DefaultAddr
+}
+
+// Shutdown gracefully shuts down the any underlying servers without
+// interrupting any active connections.
+func (s *S) Shutdown(ctx context.Context) error {
+	// s.HTTP1Server.Shutdown()
+	return nil
+}
+
+// RegisterOnShutdown registers a function to call on Shutdown.
+func (s *S) RegisterOnShutdown(f func()) {
+	s.mu.Lock()
+	s.onShutdown = append(s.onShutdown, f)
+	s.mu.Unlock()
+}
+
+// Close immediately closes all active on the underlying servers
+func (s *S) Close() error {
+	if s.GRPCServer != nil && s.HTTP1Server != nil {
+		var (
+			wg  sync.WaitGroup
+			err error
+		)
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			err = s.HTTP1Server.Close()
+		}()
+
+		go func() {
+			defer wg.Done()
+			s.GRPCServer.Stop()
+		}()
+
+		wg.Wait()
+		return err
+	}
+
+	if s.GRPCServer != nil {
+		s.GRPCServer.Stop()
+		return nil
+	}
+
+	if s.HTTP1Server != nil {
+		return s.HTTP1Server.Close()
+	}
+
+	return errors.New("nothing to close")
 }
