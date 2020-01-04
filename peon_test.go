@@ -1,36 +1,15 @@
+//+build unit
+
 package peon
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi"
 	"google.golang.org/grpc"
 )
-
-func TestPeon(t *testing.T) {
-	r := chi.NewRouter()
-
-	r.Get("/foo", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "hey you")
-	})
-
-	s := New(
-		OptionAddr(":8080"),
-		OptionGRPC(),
-		OptionHTTP1(&http.Server{
-			Handler: r,
-		}),
-	)
-
-	if err := s.ListenAndServe(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestOptionGraceful(t *testing.T) {
 	s := &S{}
@@ -71,18 +50,34 @@ func TestOptionGRPC(t *testing.T) {
 	}
 }
 
-func TestOptionHTTP1(t *testing.T) {
+func TestOptionHTTP(t *testing.T) {
 	s := &S{}
 	httpSrv := &http.Server{}
-	OptionHTTP1(httpSrv)(s)
+	OptionHTTP(httpSrv)(s)
 
-	if s.HTTP1Server != httpSrv {
-		t.Fatal("s.HTTP1 should be set with the http.Server instance passed in via OptionHTTP1")
+	if s.HTTPServer != httpSrv {
+		t.Fatal("s.HTTP should be set with the http.Server instance passed in via OptionHTTP")
+	}
+}
+
+func TestRegisterOnShutdown(t *testing.T) {
+	s := &S{}
+	funcs := []func(){
+		func() {},
+		func() {},
+		func() {},
+	}
+
+	for _, f := range funcs {
+		s.RegisterOnShutdown(f)
+	}
+
+	if len(s.onShutdown) != len(funcs) {
+		t.Fatalf("len(s.onShutdown) should equal %v, got %v", len(funcs), len(s.onShutdown))
 	}
 }
 
 func TestDefaultAddr(t *testing.T) {
-
 	addrWithoutEnv := defaultAddr()
 	if addrWithoutEnv != DefaultAddr {
 		t.Fatalf("addrWithoutEnv should equal %v, got %v", DefaultAddr, addrWithoutEnv)
