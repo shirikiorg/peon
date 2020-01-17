@@ -37,12 +37,14 @@ type Server interface {
 	Shutdown(context.Context) error
 	RegisterOnShutdown(func())
 	ListenAndServe(context.Context) error
+	GRPCServer() *grpc.Server
+	HTTPServer() *http.Server
 }
 
 // S is an implementation of Server
 type S struct {
-	GRPCServer      *grpc.Server
-	HTTPServer      *http.Server
+	grpcServer      *grpc.Server
+	httpServer      *http.Server
 	addr            string
 	graceful        bool
 	shutdownTimeout time.Duration
@@ -96,14 +98,14 @@ func OptionAddr(addr string) Option {
 // OptionGRPC adds a GRPC server with the given options
 func OptionGRPC(opts ...grpc.ServerOption) Option {
 	return func(s *S) {
-		s.GRPCServer = grpc.NewServer(opts...)
+		s.grpcServer = grpc.NewServer(opts...)
 	}
 }
 
 // OptionHTTP adds an http server
 func OptionHTTP(srv *http.Server) Option {
 	return func(s *S) {
-		s.HTTPServer = srv
+		s.httpServer = srv
 	}
 }
 
@@ -112,7 +114,7 @@ func OptionHTTP(srv *http.Server) Option {
 // According to the underlying S options ListenAndServe will listen
 // for incoming connection for http protocol and/or grpc protocol
 //
-// If both s.GRPCServer & s.HTTPServer are set the ListenAndServe will
+// If both s.grpcServer & s.httpServer are set the ListenAndServe will
 // use the `github.com/soheilhy/cmux` package under the hood in order
 // to redirect incoming request according to the http `content-type` header.
 func (s *S) ListenAndServe(ctx context.Context) error {
@@ -129,7 +131,7 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 
 	grpcL := l
 	http1L := l
-	if s.HTTPServer != nil && s.GRPCServer != nil {
+	if s.httpServer != nil && s.grpcServer != nil {
 		// Create a cmux.
 		m := cmux.New(l)
 
@@ -143,16 +145,16 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 		})
 	}
 
-	if s.HTTPServer != nil {
+	if s.httpServer != nil {
 		g.Go(func() error {
 			fmt.Printf("listening http at %s\n", s.addr)
-			return s.HTTPServer.Serve(http1L)
+			return s.httpServer.Serve(http1L)
 		})
 	}
-	if s.GRPCServer != nil {
+	if s.grpcServer != nil {
 		g.Go(func() error {
 			fmt.Printf("listening grpc at %s\n", s.addr)
-			return s.GRPCServer.Serve(grpcL)
+			return s.grpcServer.Serve(grpcL)
 		})
 	}
 
@@ -195,18 +197,18 @@ func (s *S) Shutdown(ctx context.Context) error {
 		wg  wait.Group
 	)
 
-	if s.HTTPServer != nil {
+	if s.httpServer != nil {
 		wg.Add(1)
 		go func() {
-			err = s.HTTPServer.Shutdown(ctx)
+			err = s.httpServer.Shutdown(ctx)
 			wg.Done()
 		}()
 	}
 
-	if s.GRPCServer != nil {
+	if s.grpcServer != nil {
 		wg.Add(1)
 		go func() {
-			s.GRPCServer.GracefulStop()
+			s.grpcServer.GracefulStop()
 			wg.Done()
 		}()
 	}
@@ -234,7 +236,7 @@ func (s *S) RegisterOnShutdown(f func()) {
 
 // Close immediately closes all active on the underlying servers
 func (s *S) Close() error {
-	if s.GRPCServer != nil && s.HTTPServer != nil {
+	if s.grpcServer != nil && s.httpServer != nil {
 		var (
 			wg  sync.WaitGroup
 			err error
@@ -243,26 +245,36 @@ func (s *S) Close() error {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err = s.HTTPServer.Close()
+			err = s.httpServer.Close()
 		}()
 
 		go func() {
 			defer wg.Done()
-			s.GRPCServer.Stop()
+			s.grpcServer.Stop()
 		}()
 
 		wg.Wait()
 		return err
 	}
 
-	if s.GRPCServer != nil {
-		s.GRPCServer.Stop()
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
 		return nil
 	}
 
-	if s.HTTPServer != nil {
-		return s.HTTPServer.Close()
+	if s.httpServer != nil {
+		return s.httpServer.Close()
 	}
 
 	return errors.New("nothing to close")
+}
+
+// GRPCServer returns the internal grpc server
+func (s *S) GRPCServer() *grpc.Server {
+	return s.grpcServer
+}
+
+// HTTPServer returns the internal http server
+func (s *S) HTTPServer() *http.Server {
+	return s.httpServer
 }
