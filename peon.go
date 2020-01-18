@@ -137,7 +137,12 @@ func (s *S) ListenAndServe(ctx context.Context) error {
 
 		// Match connections in order:
 		// First grpc, then HTTP, and otherwise Go RPC/TCP.
-		grpcL = m.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+		grpcL = m.MatchWithWriters(
+			cmux.HTTP2MatchHeaderFieldSendSettings(
+				"content-type",
+				"application/grpc",
+			),
+		)
 		http1L = m.Match(cmux.HTTP1Fast())
 
 		g.Go(func() error {
